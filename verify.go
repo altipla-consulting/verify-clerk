@@ -3,6 +3,7 @@ package clerk
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -38,7 +39,15 @@ func (v *Verifier[CustomClaims]) getKey(keyID string) *clerk.JSONWebKey {
 	return v.keys[keyID]
 }
 
-func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*clerk.SessionClaims, *CustomClaims, error) {
+type Audience struct {
+	v string
+}
+
+func ExpectedAudience(aud string) Audience {
+	return Audience{v: aud}
+}
+
+func (v *Verifier[CustomClaims]) Verify(ctx context.Context, aud Audience, token string) (*clerk.SessionClaims, *CustomClaims, error) {
 	unsafeClaims, err := jwt.Decode(ctx, &jwt.DecodeParams{Token: token})
 	if err != nil {
 		return nil, nil, fmt.Errorf("verify-clerk: cannot decode token: %w", err)
@@ -66,5 +75,10 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*cle
 	if err != nil {
 		return nil, nil, fmt.Errorf("verify-clerk: cannot verify token: %w", err)
 	}
+
+	if !slices.Contains(claims.Audience, aud.v) {
+		return nil, nil, fmt.Errorf("verify-clerk: unexpected audience %q", claims.Audience)
+	}
+
 	return claims, claims.Custom.(*CustomClaims), nil
 }
