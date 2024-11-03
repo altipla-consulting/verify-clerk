@@ -16,11 +16,20 @@ type Verifier[CustomClaims any] struct {
 	mx   sync.RWMutex
 	keys map[string]*clerk.JSONWebKey
 
+	aud         Audience
 	jwksClient  *jwks.Client
 	clerkClient *user.Client
 }
 
-func NewVerifier[CustomClaims any](apiKey string) *Verifier[CustomClaims] {
+type Audience struct {
+	v string
+}
+
+func ExpectedAudience(aud string) Audience {
+	return Audience{v: aud}
+}
+
+func NewVerifier[CustomClaims any](apiKey string, aud Audience) *Verifier[CustomClaims] {
 	config := &clerk.ClientConfig{
 		BackendConfig: clerk.BackendConfig{
 			Key: clerk.String(apiKey),
@@ -28,6 +37,7 @@ func NewVerifier[CustomClaims any](apiKey string) *Verifier[CustomClaims] {
 	}
 	return &Verifier[CustomClaims]{
 		keys:        make(map[string]*clerk.JSONWebKey),
+		aud:         aud,
 		jwksClient:  jwks.NewClient(config),
 		clerkClient: user.NewClient(config),
 	}
@@ -39,15 +49,7 @@ func (v *Verifier[CustomClaims]) getKey(keyID string) *clerk.JSONWebKey {
 	return v.keys[keyID]
 }
 
-type Audience struct {
-	v string
-}
-
-func ExpectedAudience(aud string) Audience {
-	return Audience{v: aud}
-}
-
-func (v *Verifier[CustomClaims]) Verify(ctx context.Context, aud Audience, token string) (*clerk.SessionClaims, *CustomClaims, error) {
+func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*clerk.SessionClaims, *CustomClaims, error) {
 	unsafeClaims, err := jwt.Decode(ctx, &jwt.DecodeParams{Token: token})
 	if err != nil {
 		return nil, nil, fmt.Errorf("verify-clerk: cannot decode token: %w", err)
@@ -76,7 +78,7 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, aud Audience, token
 		return nil, nil, fmt.Errorf("verify-clerk: cannot verify token: %w", err)
 	}
 
-	if !slices.Contains(claims.Audience, aud.v) {
+	if !slices.Contains(claims.Audience, v.aud.v) {
 		return nil, nil, fmt.Errorf("verify-clerk: unexpected audience %q", claims.Audience)
 	}
 
