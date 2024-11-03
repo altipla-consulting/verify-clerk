@@ -30,6 +30,13 @@ func ExpectedAudience(aud string) Audience {
 }
 
 func NewVerifier[CustomClaims any](apiKey string, aud Audience) *Verifier[CustomClaims] {
+	if apiKey == "" {
+		panic("verify-clerk: missing Clerk API key")
+	}
+	if aud.v == "" {
+		panic("verify-clerk: missing expected audience")
+	}
+
 	config := &clerk.ClientConfig{
 		BackendConfig: clerk.BackendConfig{
 			Key: clerk.String(apiKey),
@@ -79,7 +86,7 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*cle
 	}
 
 	if !slices.Contains(claims.Audience, v.aud.v) {
-		return nil, nil, fmt.Errorf("verify-clerk: unexpected audience %q", claims.Audience)
+		return nil, nil, fmt.Errorf("verify-clerk: audience %q missing in %v", v.aud.v, claims.Audience)
 	}
 
 	return claims, claims.Custom.(*CustomClaims), nil
