@@ -2,9 +2,12 @@ package clerk
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/jwks"
@@ -63,10 +66,7 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*cle
 	}
 	jwk := v.getKey(unsafeClaims.KeyID)
 	if jwk == nil {
-		jwk, err = jwt.GetJSONWebKey(ctx, &jwt.GetJSONWebKeyParams{
-			KeyID:      unsafeClaims.KeyID,
-			JWKSClient: v.jwksClient,
-		})
+		jwk, err = v.fetchJSONWebKey(ctx, unsafeClaims.KeyID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("verify-clerk: cannot retrieve instance jwt keys: %w", err)
 		}
@@ -90,4 +90,32 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*cle
 	}
 
 	return claims, claims.Custom.(*CustomClaims), nil
+}
+
+func (v *Verifier[CustomClaims]) fetchJSONWebKey(ctx context.Context, keyID string) (*clerk.JSONWebKey, error) {
+	var jwk *clerk.JSONWebKey
+	var err error
+
+	for i := 0; i < 3; i++ {
+		jwk, err = jwt.GetJSONWebKey(ctx, &jwt.GetJSONWebKeyParams{
+			KeyID:      keyID,
+			JWKSClient: v.jwksClient,
+		})
+		if err == nil {
+			return jwk, nil
+		}
+
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	return nil, err
 }
