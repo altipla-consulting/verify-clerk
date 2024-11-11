@@ -2,14 +2,22 @@ package clerk
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/jwks"
 	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/clerk/clerk-sdk-go/v2/user"
+)
+
+const (
+	MaxRetry       = 3
+	initialBackoff = 200 * time.Millisecond
 )
 
 type Verifier[CustomClaims any] struct {
@@ -63,10 +71,7 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*cle
 	}
 	jwk := v.getKey(unsafeClaims.KeyID)
 	if jwk == nil {
-		jwk, err = jwt.GetJSONWebKey(ctx, &jwt.GetJSONWebKeyParams{
-			KeyID:      unsafeClaims.KeyID,
-			JWKSClient: v.jwksClient,
-		})
+		jwk, err = v.getJSONWebKey(ctx, unsafeClaims.KeyID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("verify-clerk: cannot retrieve instance jwt keys: %w", err)
 		}
@@ -90,4 +95,32 @@ func (v *Verifier[CustomClaims]) Verify(ctx context.Context, token string) (*cle
 	}
 
 	return claims, claims.Custom.(*CustomClaims), nil
+}
+
+func (v *Verifier[CustomClaims]) getJSONWebKey(ctx context.Context, keyID string) (*clerk.JSONWebKey, error) {
+	var jwk *clerk.JSONWebKey
+	var err error
+
+	for i := 0; i < MaxRetry; i++ {
+		jwk, err = jwt.GetJSONWebKey(ctx, &jwt.GetJSONWebKeyParams{
+			KeyID:      keyID,
+			JWKSClient: v.jwksClient,
+		})
+		if err == nil {
+			return jwk, nil
+		}
+
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(1<<i) * initialBackoff):
+			}
+		} else {
+			return nil, err
+		}
+	}
+
+	return nil, err
 }
